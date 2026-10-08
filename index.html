@@ -1568,7 +1568,6 @@
               if (!canWrite[table](record)) return { error: { message: "Permissão negada." } };
               if (table === "acertos") {
                 if (rows.some(x => x.mes === record.mes)) return { error: { message: "Mês já acertado." } };
-                record.id = record.mes;
               }
               rows.push(record);
               persist();
@@ -1639,6 +1638,8 @@
 
     // Estado principal
     let currentUser = null;
+    let myFamilyId = null;  // UUID da família do usuário logado
+    let myFamilyInviteCode = null; // Código de convite desta família
     let myProfile = { nome: "Você", pct: 50, chave_pix: "" };
     let profilesList = [];
     let cardsList = [];
@@ -1715,12 +1716,13 @@
        ========================================================================== */
     async function loadData() {
       const query = table => sb.from(table).select("*");
-      const [p, c, b, i, a] = await Promise.all([
+      const [p, c, b, i, a, fam] = await Promise.all([
         query("profiles"),
         query("cards"),
         query("purchases").order("data", { ascending: false }),
         query("incomes"),
-        query("acertos")
+        query("acertos"),
+        query("families")
       ]);
 
       const err = [p, c, b, i, a].find(res => res.error);
@@ -1740,6 +1742,9 @@
           pct: 50,
           chave_pix: ""
         };
+        myFamilyId = myProfile.family_id || null;
+        const famRow = (fam.data || []).find(f => f.id === myFamilyId);
+        myFamilyInviteCode = famRow?.invite_code || null;
       }
     }
 
@@ -2449,6 +2454,9 @@
 
     /* 7. TELA: CONFIGURAÇÕES & PERFIL */
     function renderSettingsView() {
+      const partnerProfiles = profilesList.filter(p => p.id !== currentUser.id);
+      const isLinked = partnerProfiles.length > 0;
+
       return `
         <div class="content-box" style="padding: 20px; margin-bottom: 16px;">
           <div class="section-title" style="margin-bottom: 14px;">Seu Perfil</div>
@@ -2463,6 +2471,54 @@
           <input type="number" id="cfg-pct" min="0" max="100" value="${myProfile.pct || 50}">
 
           <button class="btn btn-primary" id="btn-save-profile" style="margin-top: 18px;">Salvar Alterações</button>
+        </div>
+
+        <div class="content-box" style="padding: 20px; margin-bottom: 16px; border-color: rgba(99, 102, 241, 0.35);">
+          <div class="section-title" style="margin-bottom: 6px;">👨‍👩‍👧 Grupo / Casal</div>
+          <p style="font-size: 13px; color: var(--text-muted); margin-bottom: 14px;">
+            Cada pessoa tem sua conta separada. Vincule seu parceiro(a) para compartilhar despesas da casa.
+          </p>
+
+          ${isLinked ? `
+            <div class="banner-alert" style="background: rgba(16,185,129,0.1); border-color: rgba(16,185,129,0.3); margin-bottom: 14px;">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#10b981" stroke-width="2"><polyline points="20 6 9 17 4 12"></polyline></svg>
+              <div>
+                <b>Grupo vinculado!</b>
+                ${partnerProfiles.map(p => `<span style="color:var(--text-muted);">${escapeHtml(p.nome || 'Parceiro(a)')}</span>`).join(", ")} ${partnerProfiles.length === 1 ? 'está' : 'estão'} no seu grupo.
+              </div>
+            </div>
+          ` : `
+            <div class="banner-alert info" style="margin-bottom: 14px;">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"></circle><line x1="12" y1="16" x2="12" y2="12"></line><line x1="12" y1="8" x2="12.01" y2="8"></line></svg>
+              <div>Você ainda não tem parceiro(a) vinculado(a). Use o código abaixo para convidar alguém.</div>
+            </div>
+          `}
+
+          <div style="margin-bottom: 16px;">
+            <label>Seu Código de Convite</label>
+            <div style="display: flex; gap: 8px; align-items: center;">
+              <div style="flex: 1; background: var(--surface-alt, rgba(255,255,255,0.07)); border: 1px solid var(--border); border-radius: 12px; padding: 12px 16px; font-family: 'JetBrains Mono', monospace; font-size: 20px; font-weight: 700; letter-spacing: 4px; text-align: center; color: var(--primary);">
+                ${myFamilyInviteCode || '------'}
+              </div>
+              <button class="btn btn-secondary" id="btn-copy-invite" style="width: auto; padding: 12px 16px;" title="Copiar código">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
+                Copiar
+              </button>
+            </div>
+            <div style="font-size: 12px; color: var(--text-muted); margin-top: 6px;">Envie este código para quem você quer vincular ao seu grupo.</div>
+          </div>
+
+          <div>
+            <label for="input-invite-code">Entrar no Grupo de Outra Pessoa</label>
+            <p style="font-size: 12.5px; color: var(--text-muted); margin-bottom: 8px;">
+              ⚠️ Ao entrar no grupo de outra pessoa, seus dados atuais passarão a ser compartilhados com ela.
+            </p>
+            <div style="display: flex; gap: 8px;">
+              <input type="text" id="input-invite-code" placeholder="Ex: AB12CD34" maxlength="10" style="text-transform: uppercase; letter-spacing: 2px; font-family: monospace; flex:1;">
+              <button class="btn btn-primary" id="btn-join-family" style="width: auto; padding: 12px 16px; white-space: nowrap;">Vincular</button>
+            </div>
+            <div class="form-error" id="invite-error"></div>
+          </div>
         </div>
 
         <div class="content-box" style="padding: 20px; margin-bottom: 16px;">
@@ -2493,7 +2549,7 @@
           <div class="content-box" style="padding: 20px; margin-bottom: 16px; border-color: rgba(99, 102, 241, 0.4);">
             <div class="section-title" style="color:var(--primary); margin-bottom: 6px;">Modo Demonstração Ativo</div>
             <p style="font-size: 12.5px; color: var(--text-muted); margin-bottom: 12px;">
-              Você está usando um banco de dados local simulado. Pode reiniciar para os dados fictícios padrão a qualquer momento.
+              Você está usando um banco de dados local simulado.
             </p>
             <button class="btn btn-secondary" id="btn-reset-demo" style="color:var(--rose);">Restaurar Demonstração</button>
           </div>
@@ -2806,6 +2862,7 @@
           if (curInst > totInst) { errEl.textContent = "A parcela atual não pode ser maior que o total de parcelas."; return; }
 
           const payload = {
+            family_id: myFamilyId,
             descricao: desc,
             valor_parcela: val,
             data: date,
@@ -2898,6 +2955,7 @@
           }
 
           const payload = {
+            family_id: myFamilyId,
             nome: name,
             owner,
             limite: limit,
@@ -2979,6 +3037,7 @@
           if (!(val > 0)) { errEl.textContent = "Informe um valor de receita válido."; return; }
 
           const payload = {
+            family_id: myFamilyId,
             tipo: type,
             valor: val,
             fixo: isFixed,
@@ -3267,11 +3326,13 @@
       if (btnToggleAcerto) {
         btnToggleAcerto.onclick = () => {
           const ymKey = ymString(selectedMonthYm);
-          const exists = acertosList.some(a => a.mes === ymKey);
-          if (exists) {
-            executeOperation(() => sb.from("acertos").delete().eq("mes", ymKey), "Acerto reaberto!");
+          const existing = acertosList.find(a => a.mes === ymKey);
+          if (existing) {
+            // Deleta pelo id da linha (PK nova)
+            executeOperation(() => sb.from("acertos").delete().eq("id", existing.id), "Acerto reaberto!");
           } else {
-            executeOperation(() => sb.from("acertos").insert({ mes: ymKey }), "Acerto marcado como concluído!");
+            // Insere com family_id para respeitar RLS
+            executeOperation(() => sb.from("acertos").insert({ mes: ymKey, family_id: myFamilyId }), "Acerto marcado como concluído!");
           }
         };
       }
@@ -3294,6 +3355,58 @@
 
           if (!nome) { showToast("Informe seu nome.", "error"); return; }
           executeOperation(() => sb.from("profiles").update({ nome, chave_pix: pix, pct }).eq("id", currentUser.id), "Perfil atualizado com sucesso!");
+        };
+      }
+
+      // Copiar código de convite
+      const btnCopyInvite = $("#btn-copy-invite");
+      if (btnCopyInvite) {
+        btnCopyInvite.onclick = () => {
+          navigator.clipboard.writeText(myFamilyInviteCode || "").then(() => {
+            showToast("Código copiado! Envie para seu parceiro(a).", "success");
+          }).catch(() => {
+            prompt("Copie o código abaixo:", myFamilyInviteCode);
+          });
+        };
+      }
+
+      // Vincular parceiro(a) pelo código de convite
+      const btnJoinFamily = $("#btn-join-family");
+      if (btnJoinFamily) {
+        btnJoinFamily.onclick = async () => {
+          const code = $("#input-invite-code")?.value.trim().toUpperCase();
+          const errEl = $("#invite-error");
+          if (!code || code.length < 6) {
+            if (errEl) errEl.textContent = "Informe o código de convite do seu parceiro(a).";
+            return;
+          }
+
+
+          // Busca a família pelo código via RPC (security definer contorna o RLS com segurança)
+          const { data: famResult, error: tErr } = await sb.rpc("get_family_by_invite", { code });
+          const targetFam = Array.isArray(famResult) ? famResult[0] : famResult;
+
+
+          if (tErr || !targetFam) {
+            if (errEl) errEl.textContent = "Código não encontrado. Verifique e tente novamente.";
+            return;
+          }
+
+          if (targetFam.id === myFamilyId) {
+            if (errEl) errEl.textContent = "Você já pertence a esta família!";
+            return;
+          }
+
+          // Vincula o usuário à nova família
+          const { error: upErr } = await sb.from("profiles").update({ family_id: targetFam.id }).eq("id", currentUser.id);
+          if (upErr) {
+            if (errEl) errEl.textContent = "Erro ao vincular: " + upErr.message;
+            return;
+          }
+
+          showToast("Vinculado(a) com sucesso! Bem-vindo ao grupo.", "success");
+          await loadData();
+          renderApp();
         };
       }
 
@@ -3342,11 +3455,29 @@
     async function initSession(session) {
       currentUser = session?.user || null;
       if (currentUser) {
+        // Busca ou cria o perfil do usuário
         let { data: profile } = await sb.from("profiles").select("*").eq("id", currentUser.id).maybeSingle();
+
         if (!profile) {
+          // Novo usuário: cria uma família exclusiva para ele
+          const { data: newFamily, error: famErr } = await sb.from("families").insert({}).select().maybeSingle();
+          const familyId = newFamily?.id || null;
+
           const defaultName = currentUser.email?.split("@")[0] || "Usuário";
-          await sb.from("profiles").insert({ id: currentUser.id, nome: defaultName, pct: 50 });
+          await sb.from("profiles").insert({
+            id: currentUser.id,
+            nome: defaultName,
+            pct: 50,
+            family_id: familyId
+          });
+        } else if (!profile.family_id) {
+          // Usuário antigo sem família: cria uma para ele
+          const { data: newFamily } = await sb.from("families").insert({}).select().maybeSingle();
+          if (newFamily) {
+            await sb.from("profiles").update({ family_id: newFamily.id }).eq("id", currentUser.id);
+          }
         }
+
         await loadData();
       }
       renderApp();
