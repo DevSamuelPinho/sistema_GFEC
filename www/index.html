@@ -1742,9 +1742,25 @@
           pct: 50,
           chave_pix: ""
         };
-        myFamilyId = myProfile.family_id || null;
+        myFamilyId = myProfile.family_id || myFamilyId || null;
         const famRow = (fam.data || []).find(f => f.id === myFamilyId);
-        myFamilyInviteCode = famRow?.invite_code || null;
+        if (famRow?.invite_code) {
+          myFamilyInviteCode = famRow.invite_code;
+        }
+
+        // Se ainda não tem código e não está em demo, busca via RPC
+        if (!myFamilyInviteCode && sb && !isDemoMode) {
+          try {
+            const { data: famRes } = await sb.rpc("ensure_my_family");
+            if (famRes && famRes.length > 0) {
+              myFamilyId = famRes[0].family_id;
+              myFamilyInviteCode = famRes[0].invite_code;
+              myProfile.family_id = myFamilyId;
+            }
+          } catch (e) {
+            console.warn("loadData ensure_my_family fallback:", e);
+          }
+        }
       }
     }
 
@@ -2500,10 +2516,16 @@
               <div style="flex: 1; background: var(--surface-alt, rgba(255,255,255,0.07)); border: 1px solid var(--border); border-radius: 12px; padding: 12px 16px; font-family: 'JetBrains Mono', monospace; font-size: 20px; font-weight: 700; letter-spacing: 4px; text-align: center; color: var(--primary);">
                 ${myFamilyInviteCode || '------'}
               </div>
-              <button class="btn btn-secondary" id="btn-copy-invite" style="width: auto; padding: 12px 16px;" title="Copiar código">
-                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
-                Copiar
-              </button>
+              ${myFamilyInviteCode ? `
+                <button class="btn btn-secondary" id="btn-copy-invite" style="width: auto; padding: 12px 16px;" title="Copiar código">
+                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
+                  Copiar
+                </button>
+              ` : `
+                <button class="btn btn-primary" id="btn-generate-invite" style="width: auto; padding: 12px 16px; white-space: nowrap;" title="Gerar código">
+                  ⚡ Gerar Código
+                </button>
+              `}
             </div>
             <div style="font-size: 12px; color: var(--text-muted); margin-top: 6px;">Envie este código para quem você quer vincular ao seu grupo.</div>
           </div>
@@ -3370,7 +3392,34 @@
         };
       }
 
-      // Vincular parceiro(a) pelo código de convite
+      // Gerar código de convite se não tiver
+      const btnGenerateInvite = $("#btn-generate-invite");
+      if (btnGenerateInvite) {
+        btnGenerateInvite.onclick = async () => {
+          btnGenerateInvite.disabled = true;
+          btnGenerateInvite.textContent = "Gerando...";
+          try {
+            const { data, error } = await sb.rpc("ensure_my_family");
+            if (data && data.length > 0) {
+              myFamilyId = data[0].family_id;
+              myFamilyInviteCode = data[0].invite_code;
+              showToast("Código gerado com sucesso!", "success");
+              await loadData();
+              renderApp();
+            } else {
+              showToast("Erro ao gerar: " + (error?.message || "Tente novamente"), "error");
+              btnGenerateInvite.disabled = false;
+              btnGenerateInvite.textContent = "⚡ Gerar Código";
+            }
+          } catch (e) {
+            showToast("Erro ao gerar código: " + e.message, "error");
+            btnGenerateInvite.disabled = false;
+            btnGenerateInvite.textContent = "⚡ Gerar Código";
+          }
+        };
+      }
+
+      // Vincular parceiro(a) pelo código de convite via RPC seguro
       const btnJoinFamily = $("#btn-join-family");
       if (btnJoinFamily) {
         btnJoinFamily.onclick = async () => {
@@ -3381,32 +3430,27 @@
             return;
           }
 
+          btnJoinFamily.disabled = true;
+          btnJoinFamily.textContent = "Vinculando...";
 
-          // Busca a família pelo código via RPC (security definer contorna o RLS com segurança)
-          const { data: famResult, error: tErr } = await sb.rpc("get_family_by_invite", { code });
-          const targetFam = Array.isArray(famResult) ? famResult[0] : famResult;
+          try {
+            const { data: joinRes, error: jErr } = await sb.rpc("join_family_by_invite", { code });
+            if (jErr || !joinRes || !joinRes.success) {
+              const msg = joinRes?.error || jErr?.message || "Código não encontrado. Verifique e tente novamente.";
+              if (errEl) errEl.textContent = msg;
+              btnJoinFamily.disabled = false;
+              btnJoinFamily.textContent = "Vincular";
+              return;
+            }
 
-
-          if (tErr || !targetFam) {
-            if (errEl) errEl.textContent = "Código não encontrado. Verifique e tente novamente.";
-            return;
+            showToast("Vinculado(a) com sucesso! Bem-vindo ao grupo.", "success");
+            await loadData();
+            renderApp();
+          } catch (e) {
+            if (errEl) errEl.textContent = "Erro na requisição: " + e.message;
+            btnJoinFamily.disabled = false;
+            btnJoinFamily.textContent = "Vincular";
           }
-
-          if (targetFam.id === myFamilyId) {
-            if (errEl) errEl.textContent = "Você já pertence a esta família!";
-            return;
-          }
-
-          // Vincula o usuário à nova família
-          const { error: upErr } = await sb.from("profiles").update({ family_id: targetFam.id }).eq("id", currentUser.id);
-          if (upErr) {
-            if (errEl) errEl.textContent = "Erro ao vincular: " + upErr.message;
-            return;
-          }
-
-          showToast("Vinculado(a) com sucesso! Bem-vindo ao grupo.", "success");
-          await loadData();
-          renderApp();
         };
       }
 
@@ -3455,27 +3499,15 @@
     async function initSession(session) {
       currentUser = session?.user || null;
       if (currentUser) {
-        // Busca ou cria o perfil do usuário
-        let { data: profile } = await sb.from("profiles").select("*").eq("id", currentUser.id).maybeSingle();
-
-        if (!profile) {
-          // Novo usuário: cria uma família exclusiva para ele
-          const { data: newFamily, error: famErr } = await sb.from("families").insert({}).select().maybeSingle();
-          const familyId = newFamily?.id || null;
-
-          const defaultName = currentUser.email?.split("@")[0] || "Usuário";
-          await sb.from("profiles").insert({
-            id: currentUser.id,
-            nome: defaultName,
-            pct: 50,
-            family_id: familyId
-          });
-        } else if (!profile.family_id) {
-          // Usuário antigo sem família: cria uma para ele
-          const { data: newFamily } = await sb.from("families").insert({}).select().maybeSingle();
-          if (newFamily) {
-            await sb.from("profiles").update({ family_id: newFamily.id }).eq("id", currentUser.id);
+        // Garante criação/recuperação do grupo e código de convite via RPC seguro
+        try {
+          const { data: famRes } = await sb.rpc("ensure_my_family");
+          if (famRes && famRes.length > 0) {
+            myFamilyId = famRes[0].family_id;
+            myFamilyInviteCode = famRes[0].invite_code;
           }
+        } catch (e) {
+          console.warn("initSession ensure_my_family:", e);
         }
 
         await loadData();

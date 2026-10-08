@@ -192,13 +192,95 @@ create index if not exists idx_incomes_family     on incomes(family_id, user_id)
 create index if not exists idx_families_invite    on families(invite_code);
 
 -- ==============================================================================
--- 8. FUNÇÃO RPC - Busca família pelo código de convite (bypass seguro do RLS)
--- Usada no frontend para encontrar a família de outra pessoa pelo código de convite
--- sem precisar expor todas as famílias.
+-- 8. FUNÇÕES RPC (Seguras com Security Definer)
 -- ==============================================================================
+
+-- 8.1 Garante que o usuário autenticado tenha uma família e retorna o código de convite
+create or replace function ensure_my_family()
+returns table(family_id uuid, invite_code text)
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_uid uuid := auth.uid();
+  v_fam_id uuid;
+  v_code text;
+begin
+  if v_uid is null then
+    return;
+  end if;
+
+  -- 1. Verifica se o usuário já tem perfil com family_id válido
+  select p.family_id into v_fam_id from profiles p where p.id = v_uid;
+
+  if v_fam_id is not null then
+    select f.invite_code into v_code from families f where f.id = v_fam_id;
+    if v_code is not null then
+      return query select v_fam_id, v_code;
+      return;
+    end if;
+  end if;
+
+  -- 2. Se não tem família válida, cria uma nova família
+  insert into families default values
+  returning id, families.invite_code into v_fam_id, v_code;
+
+  -- 3. Vincula a família criada ao perfil do usuário
+  insert into profiles (id, family_id, nome, pct)
+  values (v_uid, v_fam_id, coalesce(split_part(auth.jwt()->>'email', '@', 1), 'Usuário'), 50)
+  on conflict (id) do update set family_id = v_fam_id;
+
+  return query select v_fam_id, v_code;
+end;
+$$;
+
+-- 8.2 Busca família pelo código de convite
 create or replace function get_family_by_invite(code text)
 returns table(id uuid, invite_code text)
 language sql stable security definer as $$
-  select id, invite_code from families where invite_code = upper(code) limit 1;
+  select id, invite_code from families where invite_code = upper(trim(code)) limit 1;
 $$;
+
+-- 8.3 Vincula o usuário autenticado ao grupo pelo código de convite e migra seus dados
+create or replace function join_family_by_invite(code text)
+returns json
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_uid uuid := auth.uid();
+  v_target_id uuid;
+  v_old_fam_id uuid;
+begin
+  if v_uid is null then
+    return json_build_object('success', false, 'error', 'Não autenticado');
+  end if;
+
+  select id into v_target_id from families where invite_code = upper(trim(code)) limit 1;
+  if v_target_id is null then
+    return json_build_object('success', false, 'error', 'Código de convite não encontrado.');
+  end if;
+
+  select family_id into v_old_fam_id from profiles where id = v_uid;
+  if v_old_fam_id = v_target_id then
+    return json_build_object('success', false, 'error', 'Você já faz parte deste grupo!');
+  end if;
+
+  -- Atualiza o perfil para a nova família
+  update profiles set family_id = v_target_id where id = v_uid;
+
+  -- Migra cartões e compras do usuário para a nova família
+  update cards set family_id = v_target_id where owner = v_uid;
+  update purchases set family_id = v_target_id where user_id = v_uid;
+  update incomes set family_id = v_target_id where user_id = v_uid;
+
+  return json_build_object('success', true, 'family_id', v_target_id);
+end;
+$$;
+
+grant execute on function ensure_my_family to authenticated;
+grant execute on function get_family_by_invite to authenticated;
+grant execute on function join_family_by_invite to authenticated;
 
