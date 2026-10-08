@@ -1,0 +1,29 @@
+# Arquivos e anotações com dados sensíveis
+DADOS IMPORTANTES.txt
+schema.sql
+*.env
+*.env.local
+
+# Dependências do projeto e pacotes instalados
+node_modules/
+
+# Arquivos e pastas gerados por IDEs / Editores de Código
+.idea/
+.vscode/
+.kombai/
+
+# Arquivos de sistema operacional
+.DS_Store
+Thumbs.db
+
+# Chaves de segurança e certificados (mobile)
+*.jks
+*.keystore
+*.mobileprovision
+*.p12
+
+# (Opcional) Pastas de build nativo geradas pelo Capacitor
+# Se você quiser versionar o código do Android e iOS no futuro,
+# basta apagar as duas linhas abaixo.
+android/
+ios/

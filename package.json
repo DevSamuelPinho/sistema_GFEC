@@ -1,0 +1,36 @@
+{
+  "name": "sistema-gfec",
+  "version": "1.0.0",
+  "description": "Sistema de Gestão Financeira do Casal - Android, iOS e Web",
+  "main": "index.html",
+  "scripts": {
+    "start": "npx serve .",
+    "build": "node scripts/build.js",
+    "cap:init": "cap init \"Finanças GFEC\" \"com.gfec.financas\" --web-dir www",
+    "cap:add:android": "cap add android",
+    "cap:add:ios": "cap add ios",
+    "cap:sync": "npm run build && cap sync",
+    "cap:open:android": "cap open android",
+    "cap:open:ios": "cap open ios",
+    "cap:run:android": "cap run android",
+    "cap:run:ios": "cap run ios"
+  },
+  "keywords": [
+    "financas",
+    "casal",
+    "pwa",
+    "capacitor",
+    "android",
+    "ios"
+  ],
+  "author": "GFEC Team",
+  "license": "MIT",
+  "devDependencies": {
+    "@capacitor/cli": "^6.2.0"
+  },
+  "dependencies": {
+    "@capacitor/android": "^6.2.0",
+    "@capacitor/core": "^6.2.0",
+    "@capacitor/ios": "^6.2.0"
+  }
+}
